@@ -3,6 +3,14 @@
 #include <math.h>
 #include <float.h>
 
+#define CHECK_CUDA(call) { \
+    cudaError_t err = call; \
+    if (err != cudaSuccess) { \
+        fprintf(stderr, "CUDA error in %s at line %d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
+        exit(EXIT_FAILURE); \
+    } \
+}
+
 #define MAX_ITER 100
 #define THREADS_PER_BLOCK 256
 
@@ -64,15 +72,15 @@ extern "C" void kmeans(const float* d_vectors,
                         int max_iter) {
     float *d_new_sums;
     int *d_counts;
-    cudaMalloc(&d_new_sums, k * d * sizeof(float));
-    cudaMalloc(&d_counts, k * sizeof(int));
+    CHECK_CUDA(cudaMalloc(&d_new_sums, k * d * sizeof(float)));
+    CHECK_CUDA(cudaMalloc(&d_counts, k * sizeof(int)));
 
     dim3 blocksize(THREADS_PER_BLOCK);
     dim3 gridSize((k + blocksize.x - 1) / blocksize.x);
     for (int iter = 0; iter < max_iter; iter++) {
         // reset new_sums and counts
-        cudaMemset(d_new_sums, 0, k * d * sizeof(float));
-        cudaMemset(d_counts, 0, k * sizeof(int));
+        CHECK_CUDA(cudaMemset(d_new_sums, 0, k * d * sizeof(float)));
+        CHECK_CUDA(cudaMemset(d_counts, 0, k * sizeof(int)));
 
         // assign clusters and update sums/counts
         assign_clusters<<<gridSize, blocksize>>>(d_vectors, d_centeroids, d_assignments, d_new_sums, d_counts, n, d, k);
@@ -82,6 +90,6 @@ extern "C" void kmeans(const float* d_vectors,
         update_centeroids<<<gridSize, blocksize>>>(d_centeroids, d_new_sums, d_counts, k, d);
         cudaDeviceSynchronize();
     }
-    cudaFree(d_new_sums);
-    cudaFree(d_counts);
+    CHECK_CUDA(cudaFree(d_new_sums));
+    CHECK_CUDA(cudaFree(d_counts));
 }
