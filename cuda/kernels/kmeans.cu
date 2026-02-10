@@ -62,17 +62,17 @@ extern "C" void kmeans(const float* d_vectors,
                         int *d_assignments,
                         int n, int d, int k,
                         int max_iter) {
-    float *d_new_sums, 
+    float *d_new_sums;
     int *d_counts;
     cudaMalloc(&d_new_sums, k * d * sizeof(float));
-    cudaMalloc(&d_counts, k * sizeof(float));
+    cudaMalloc(&d_counts, k * sizeof(int));
 
     dim3 blocksize(THREADS_PER_BLOCK);
     dim3 gridSize((n + blocksize.x - 1) / blocksize.x);
     for (int iter = 0; iter < max_iter; iter++) {
         // reset new_sums and counts
         cudaMemset(d_new_sums, 0, k * d * sizeof(float));
-        cudaMemset(d_counts, 0, k * sizeof(float));
+        cudaMemset(d_counts, 0, k * sizeof(int));
 
         // assign clusters and update sums/counts
         assign_clusters<<<gridSize, blocksize>>>(d_vectors, d_centeroids, d_assignments, d_new_sums, d_counts, n, d, k);
