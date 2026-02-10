@@ -10,15 +10,14 @@ __global__ void distance_kernel(const float* __restrict__ queries,
     int query_idx = blockIdx.y;
 
     if (vec_idx < n && query_idx < nq){
-        float sum = 0.0f;
-
         // shared memory for the query vector
         extern __shared__ float query_shared[];
-        if (threadIdx.x < d) {
-            query_shared[threadIdx.x] = queries[query_idx * d + threadIdx.x];
+        for (int i = threadIdx.x; i < d; i += blockDim.x) {
+            query_shared[i] = queries[query_idx * d + i];
         }
         __syncthreads();
 
+        float sum = 0.0f;
         for (int i=0; i<d; i++){
             float diff = vectors[vec_idx * d + i] - query_shared[i];
             sum += diff * diff;
