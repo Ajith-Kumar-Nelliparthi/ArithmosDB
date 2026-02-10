@@ -68,7 +68,7 @@ extern "C" void kmeans(const float* d_vectors,
     cudaMalloc(&d_counts, k * sizeof(int));
 
     dim3 blocksize(THREADS_PER_BLOCK);
-    dim3 gridSize((n + blocksize.x - 1) / blocksize.x);
+    dim3 gridSize((k + blocksize.x - 1) / blocksize.x);
     for (int iter = 0; iter < max_iter; iter++) {
         // reset new_sums and counts
         cudaMemset(d_new_sums, 0, k * d * sizeof(float));
