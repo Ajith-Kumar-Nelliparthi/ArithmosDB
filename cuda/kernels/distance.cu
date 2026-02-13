@@ -1,10 +1,23 @@
+#include <stdio.h>
+#include <cuda_runtime.h>
+#include <math.h>
+#include <float.h>
+
+// error checking macro
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            fprintf(stderr, "CUDA error at %s:%d: %s\n", \
+                    __FILE__, __LINE__, cudaGetErrorString(err)); \
+            exit(EXIT_FAILURE); \
+        } \
+    } while(0)
+
 /**
  * Compute L2 distances between queries and vectors
  * Uses shared memory for query to reduce global memory loads.
  */
-
-#include <stdio.h>
-#include <cuda_runtime.h>
 
 __global__ void distance_kernel(const float* __restrict__ queries,
                                 const float* __restrict__ vectors,
@@ -39,5 +52,6 @@ extern  "C" void compute_distances(const float* queries, const float* vectors, f
     size_t sharedMemSize = d * sizeof(float);
 
     distance_kernel<<<gridSize, blockSize, sharedMemSize>>>(queries, vectors, distances, n, d, nq);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
