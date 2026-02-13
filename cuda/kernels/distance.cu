@@ -1,3 +1,8 @@
+/**
+ * Compute L2 distances between queries and vectors
+ * Uses shared memory for query to reduce global memory loads.
+ */
+
 #include <stdio.h>
 #include <cuda_runtime.h>
 
