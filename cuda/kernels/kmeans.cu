@@ -1,3 +1,7 @@
+/**
+ * Assign each vector to nearest centeroid and accumulate sums
+ */
+
 #include <stdio.h>
 #include <cuda_runtime.h>
 #include <math.h>
@@ -49,7 +53,9 @@ __global__ void assign_clusters(const float* __restrict__ vectors,
     atomicAdd(&counts[best_cluster], 1);
 }
 
-// Update centeroids by dividing the sums by the counts
+/**
+ * Update centroids by averaging the accumulated sums
+ */
 __global__ void update_centeroids(float* __restrict__ centeroids, 
                                 const float *__restrict__ new_sums, 
                                 int *counts,
