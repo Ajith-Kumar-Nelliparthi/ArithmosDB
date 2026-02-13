@@ -4,12 +4,12 @@
 #include <float.h>
 
 __global__ void topk_selection(const float* __restrict__ distances,
-                                float* __restrict__ indices,
+                                int* __restrict__ indices,
                                 float* __restrict__ top_distances,
                                 int n, int k, int nq) {
     
     int query_idx = blockIdx.x;
-    if (query_idx >= n) return;
+    if (query_idx >= nq) return;
 
     extern __shared__ char shared_mem[];
     float* s_dist = (float*)shared_mem;
@@ -53,7 +53,7 @@ __global__ void topk_selection(const float* __restrict__ distances,
 }
 
 extern "C" void find_topk(const float* d_distances,
-                        float* d_indices,
+                        int* d_indices,
                         float* d_top_distances,
                         int n, int k, int nq){
     dim3 blockSize(256);
