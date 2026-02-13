@@ -1,4 +1,7 @@
-// Top-K Selection
+/**
+ * Find top-k smallest distances for each query using bubble sort.
+ * Note: Bubble sort can be updated with bitonic sort or heap.
+ */
 #include <stdio.h>
 #include <cuda_runtime.h>
 #include <float.h>
