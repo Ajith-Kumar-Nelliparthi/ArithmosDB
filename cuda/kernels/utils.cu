@@ -48,3 +48,81 @@ extern "C" void transpose(const float* d_input,
     CHECK_CUDA(cudaGetLastError());
     CHECK_CUDA(cudaDeviceSynchronize());
 }
+
+/**
+ * Normalize vectors in place for cosine similarity
+ */
+__global__ void normalize_kernel(float* __restrict__ vectors,
+                                 int n, int d) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (idx < n) {
+        float norm = 0.0f;
+        
+        // Compute L2 norm
+        for (int i = 0; i < d; i++) {
+            float val = vectors[idx * d + i];
+            norm += val * val;
+        }
+        norm = sqrtf(norm);
+        
+        // Normalize
+        if (norm > 1e-10f) {
+            for (int i = 0; i < d; i++) {
+                vectors[idx * d + i] /= norm;
+            }
+        }
+    }
+}
+
+extern "C" void normalise_vectors(float* d_vectors, int d, int n) {
+    dim3 blockSize(256);
+    dim3 gridSize((n + blockSize.x - 1) / blockSize.x);
+    normalize_kernel<<<gridSize, blockSize>>>(d_vectors, d, n);
+
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaDeviceSynchronize());
+}
+
+/**
+ * Compute Cosine Similarity
+ */
+__global__ void cosine_similarity_kernel(const float* __restrict__ queries,
+                                            const float* __restrict__ vectors,
+                                            float* __restrict__ similarities,
+                                            int n, int d, int nq) {
+    int vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int query_idx = blockIdx.y;
+    int tid = threadIdx.x;
+
+    if (vec_idx < n && query_idx < nq) {
+        extern __shared__ float query_shared[];
+
+        // load query into shared memory
+        for (int i=tid; i<d; i+= blockDim.x) {
+            query_shared[i] = queries[query_idx * d + i];
+        }
+        __syncthreads();
+
+        float dot_product = 0.0f;
+        for (int i=0; i<d; i++) {
+            dot_product += vectors[vec_idx * d + i] * query_shared[i];
+        }
+
+        // store as distance
+        similarities[query_idx * n + vec_idx] = 1.0f - dot_product;
+    }
+}
+
+extern "C" void cosine_similarity(const float* queries,
+                                    const float* vectors,
+                                float* similarities,
+                                int n, int d, int nq) {
+    dim3 blockSize(256);
+    dim3 gridSize((n + blockSize.x - 1) / blockSize.x, nq);
+    size_t sharedMem = d * sizeof(float);
+
+    cosine_similarity_kernel<<<gridSize, blockSize, sharedMem>>>(queries, vectors, similarities, n, d, nq);
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaDeviceSynchronize());
+}
