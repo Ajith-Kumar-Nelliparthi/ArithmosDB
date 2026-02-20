@@ -66,3 +66,11 @@ extern "C" void find_topk(const float* d_distances,
     topk_selection<<<gridSize, blockSize, size>>>(d_distances, d_indices, d_top_distances, n, k, nq);
     cudaDeviceSynchronize();
 }
+
+/**
+ * Disadvantages of this approach:
+ * 1. Inefficient for large n: Bubble sort has a time complexity of O(n^2), which can be very slow for large n.
+ * 2. Not suitable for large k: If k is close to n, the performance will degrade significantly as the algorithm will need to perform more comparisons and swaps.
+ * 3. High shared memory usage: This approach requires a large amount of shared memory to store the distances and indices for each query, which may limit the number of threads that can be launched and reduce occupancy.
+ * 4. Not scalable: As the number of queries (nq) increases, the performance may degrade due to increased contention for shared memory and global memory bandwidth.
+ */
