@@ -1,101 +1,136 @@
-/**
- * Assign each vector to nearest centeroid and accumulate sums
- */
+// src/kmeans.cu
+#include "../include/kmeans.cuh"
+#include "../include/distance.cuh"
+#include <thrust/device_ptr.h>
+#include <thrust/max_element.h>
 
-#include <stdio.h>
-#include <cuda_runtime.h>
-#include <math.h>
-#include <float.h>
+__global__ void kmenas_min_dist_kernel(const float* vectors,
+                                        const float* centeroids,
+                                        float* min_dists,
+                                        int n, int d, int cur_k) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
 
-#define CHECK_CUDA(call) { \
-    cudaError_t err = call; \
-    if (err != cudaSuccess) { \
-        fprintf(stderr, "CUDA error in %s at line %d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
-        exit(EXIT_FAILURE); \
-    } \
+    float best = FLT_MAX;
+    for (int c = 0; c < cur_k; c++) {
+        float sum = 0.0f;
+        for (int j = 0; j < d; j++) {
+            float diff = vectors[idx * d + j] - centeroids[c * d + j];
+            sum += diff * diff;
+        }
+        if (sum < best) best = sum;
+    }
+    min_dists[idx] = best;
 }
 
-#define MAX_ITER 100
-#define THREADS_PER_BLOCK 256
+extern "C" void init_kmeanspp(const float* d_vectors,
+                            float* d_centeroids,
+                            int n_vectors, int dim, int n_clusters) {
+    if (n_clusters <= 0) return;
+
+    // Randomly select the first centeroid
+    int first = rand() % n_vectors;
+    cudaMemcpy(d_centeroids, d_centeroids + first * dim, dim * sizeof(float), cudaMemcpyDeviceToDevice);
+
+    float *d_min_dists;
+    CUDA_CHECK(cudaMalloc(&d_min_dists, n_vectors * sizeof(float)));
+
+    for (int c = 1; c < n_clusters; c++) {
+        dim3 block(THREADS_PER_BLOCK);
+        dim3 grid((n_vectors + block.x - 1) / block.x);
+        kmenas_min_dist_kernel<<<grid, block>>>(d_vectors, d_centeroids, d_min_dists, n_vectors, dim, c);
+
+        thrust::device_ptr<float> ptr(d_min_dists);
+        auto max_it = thrust::max_element(ptr, ptr + n_vectors);
+        int chosen = max_it - ptr;
+
+        CUDA_CHECK(cudaMemcpy(d_centeroids + c * dim,
+                            d_vectors + chosen * dim,
+                            dim * sizeof(float),
+                            cudaMemcpyDeviceToDevice));
+    }
+    CUDA_CHECK(cudaFree(d_min_dists));
+}
 
 __global__ void assign_clusters(const float* __restrict__ vectors,
-                                const float* __restrict__ centeroids,
-                                int *assignments,
-                                float *new_sums,
-                                int *counts,
-                                int n, int d, int k) {
-    int vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (vec_idx >= n) return;
+                            const float* __restrict__ centeroids,
+                            int* assignments,
+                            int n_vectors, int dim, int n_clusters) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n_vectors) return;
 
     float min_dist = FLT_MAX;
     int best_cluster = 0;
-
-    // find the closest centeroid
-    for (int cluster = 0; cluster < k; cluster++) {
+    for (int c = 0; c < n_clusters; c++) {
         float dist = 0.0f;
-        for (int dim = 0; dim < d; dim++) {
-            float diff = vectors[vec_idx * d + dim] - centeroids[cluster * d + dim];
+        for (int j = 0; j < dim; j++) {
+            float diff = vectors[idx * dim + j] - centeroids[c * dim + j];
             dist += diff * diff;
         }
         if (dist < min_dist) {
             min_dist = dist;
-            best_cluster = cluster;
+            best_cluster = c;
         }
     }
-
-    // assign the vector to the closest cluster
-    assignments[vec_idx] = best_cluster;
-
-    // atomic update of the centeroid sums and counts
-    for (int dim = 0; dim < d; dim++) {
-        atomicAdd(&new_sums[best_cluster * d + dim], vectors[vec_idx * d + dim]);
-    }
-    atomicAdd(&counts[best_cluster], 1);
+    assignments[idx] = best_cluster;
 }
 
-/**
- * Update centroids by averaging the accumulated sums
- */
-__global__ void update_centeroids(float* __restrict__ centeroids, 
-                                const float *__restrict__ new_sums, 
-                                int *counts,
-                                int k, int d){
+__global__ void update_centeroids(const float* __restrict__ vectors,
+                                const int* __restrict__ assignments,
+                                float* centeroids,
+                                int* cluster_counts,
+                                int n_vectors, int dim, int n_clusters) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= k) return;
+    if (idx >= n_vectors) return;
 
-    if (counts[idx] > 0) {
-        for (int dim = 0; dim < d; dim++) {
-            centeroids[idx * d + dim] = new_sums[idx * d + dim] / counts[idx];
+    int cluster = assignments[idx];
+    atomicAdd(&cluster_counts[cluster], 1);
+
+    for (int j = 0; j < dim; j++) {
+        atomicAdd(&centeroids[cluster * dim + j], vectors[idx * dim + j]);
+    }
+}
+
+__global__ void normalize_centroids_kernel(float* centroids,
+                                           const int* __restrict__ cluster_counts,
+                                           int dim, int n_clusters) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n_clusters) return;
+
+    int count = cluster_counts[idx];
+    if (count > 0) {
+        for (int j = 0; j < dim; j++) {
+            centroids[idx * dim + j] /= count;
         }
     }
 }
 
-// host wrapper
-extern "C" void kmeans(const float* d_vectors,
-                        float* d_centeroids,
-                        int *d_assignments,
-                        int n, int d, int k,
-                        int max_iter) {
-    float *d_new_sums;
-    int *d_counts;
-    CHECK_CUDA(cudaMalloc(&d_new_sums, k * d * sizeof(float)));
-    CHECK_CUDA(cudaMalloc(&d_counts, k * sizeof(int)));
+extern "C" void run_kmeans(const float* d_vectors,
+                    float* d_centeroids,
+                    int* d_assignments,
+                    int n_vectors, int dim, int n_clusters, int max_iter) {
+    init_kmeanspp(d_vectors, d_centeroids, n_vectors, dim, n_clusters);
 
-    dim3 blocksize(THREADS_PER_BLOCK);
-    dim3 gridSize((k + blocksize.x - 1) / blocksize.x);
+    dim3 block(THREADS_PER_BLOCK);
+    dim3 grid((n_vectors + block.x - 1) / block.x);
+
     for (int iter = 0; iter < max_iter; iter++) {
-        // reset new_sums and counts
-        CHECK_CUDA(cudaMemset(d_new_sums, 0, k * d * sizeof(float)));
-        CHECK_CUDA(cudaMemset(d_counts, 0, k * sizeof(int)));
+        assign_clusters<<<grid, block>>>(d_vectors, d_centeroids, d_assignments, n_vectors, dim, n_clusters);
 
-        // assign clusters and update sums/counts
-        assign_clusters<<<gridSize, blocksize>>>(d_vectors, d_centeroids, d_assignments, d_new_sums, d_counts, n, d, k);
-        cudaDeviceSynchronize();
+        CUDA_CHECK(cudaDeviceSynchronize());
 
-        // update centeroids
-        update_centeroids<<<gridSize, blocksize>>>(d_centeroids, d_new_sums, d_counts, k, d);
-        cudaDeviceSynchronize();
+        // Centroid update step
+        int *d_cluster_counts;
+        CUDA_CHECK(cudaMalloc(&d_cluster_counts, n_clusters * sizeof(int)));
+        CUDA_CHECK(cudaMemset(d_cluster_counts, 0, n_clusters * sizeof(int)));
+        CUDA_CHECK(cudaMemset(d_centeroids, 0, n_clusters * dim * sizeof(float)));
+
+        update_centroids_kernel<<<grid, block>>>(d_vectors, d_assignments, d_centeroids, d_cluster_counts, n_vectors, dim, n_clusters);
+        
+        dim3 centroid_grid((n_clusters + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK);
+        normalize_centroids_kernel<<<centroid_grid, block>>>(d_centeroids, d_cluster_counts, dim, n_clusters);
+
+        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaFree(d_cluster_counts));
     }
-    CHECK_CUDA(cudaFree(d_new_sums));
-    CHECK_CUDA(cudaFree(d_counts));
 }
