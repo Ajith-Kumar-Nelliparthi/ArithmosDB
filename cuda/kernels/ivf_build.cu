@@ -1,7 +1,15 @@
 #include <stdio.h>
 #include <cuda_runtime.h>
 #include <thrust/device_vector.h>
+#include <thrust/scan.h>
+#include <thrust/sort.h>
+#include <thrust/unique.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/counting_iterator.h>
 
+#include "../include/common.cuh"
+#include "../include/ivf_index.cuh"
+#include "../include/kmeans.cuh"
 
 /**
  * REORDER  KERNEL
@@ -16,22 +24,56 @@
                                 float* d_inverted_vectors, // out: reordered n x d matrix of vectors
                                 int* d_inverted_ids, // out: original indices of vectors in the new order
                                 int n, int d) {
+                                    
     int vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (vec_idx < n) {
-        // find which cluster this vector belongs to
-        int cluster_id = d_assignments[vec_idx];
 
-        // a unique position id inside the cluster's list
-        int position_in_list = atomicAdd(&d_working_offsets[cluster_id], 1);
+    if (vec_idx >= n) return;
+    
+    // find which cluster this vector belongs to
+    int cluster_id = d_assignments[vec_idx];
 
-        // store the original id at that position
-        d_inverted_ids[position_in_list] = vec_idx;
+    // a unique position id inside the cluster's list
+    int position_in_list = atomicAdd(&d_working_offsets[cluster_id], 1);
 
-        // copy the vector to the new position in the inverted list
-        for (int i=0; i<d; i++) {
-            d_inverted_vectors[position_in_list * d + i] = d_vectors[vec_idx * d + i];
-        }
+    // store the original id at that position
+    d_inverted_ids[position_in_list] = vec_idx;
+
+    // copy the vector to the new position in the inverted list
+    #pragma unroll
+    for (int i=0; i<d; i++) {
+        d_inverted_vectors[position_in_list * d + i] = d_vectors[vec_idx * d + i];
     }
+}
+
+extern "C" void build_ivf(const float* d_vectors,
+                            IVFIndex* index,
+                            int n_vectors,
+                            int dim,
+                            int nlist /* = 0 */,
+                            int max_iter /* = 25 */) {
+    if (nlist <= 0) {
+        nlist = (int)(sqrtf((float)n_vectors) * 1.2f) + 1;
+        if (nlist < 16) nlist = 16;
+        if (nlist > 8192) nlist = 8192;
+    }
+
+    index->nlist = nlist;
+    index->n_vectors = n_vectors;
+    index->dim = dim;
+
+    // allocate index components
+    CUDA_CHECK(cudaMalloc(&index->d_centeroids, nlist * dim * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&index->d_inverted_vectors, n_vectors * dim * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&index->d_inverted_ids, n_vectors * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&index->d_list_offsets, (nlist + 1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&index->d_list_sizes, nlist * sizeof(int)));
+
+    // temp
+    int *d_assignments = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_assignments, n_vectors * sizeof(int)));
+
+    // run k-means to find centeroids and assignments
+    run_kmeans(d_vectors, index->d_centeroids, d_assignments, n_vectors, dim, nlist, max_iter);
 }
 
 /**
