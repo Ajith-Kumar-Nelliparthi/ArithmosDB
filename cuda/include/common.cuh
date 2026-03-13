@@ -16,7 +16,7 @@
 } while (0)
 
 struct  IVFIndex {
-    float* d_centeroids;  // nlist * d
+    float* d_centroids;  // nlist * d
     float* d_inverted_vectors;
     int* d_inverted_ids;
     int* d_list_offsets;
