@@ -1,5 +1,5 @@
-# ArithmosDB
 ![alt text](assets/arithmosdb-logo.png)
+# ArithmosDB
 GPU-accelerated vector database built from scratch in CUDA. Custom kernels, no dependencies on FAISS or cuVS.
 
 ---
