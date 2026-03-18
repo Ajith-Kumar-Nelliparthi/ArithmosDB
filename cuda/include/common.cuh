@@ -5,22 +5,24 @@
 #include <stdio.h>
 
 #define THREADS_PER_BLOCK 256
+#define MAX_K 64
 
-// Error checking macro for CUDA calls
 #define CUDA_CHECK(call) do { \
-    cudaError_t err = call; \
+    cudaError_t err = (call); \
     if (err != cudaSuccess) { \
-        fprintf(stderr, "CUDA error in %s at line %d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
+        fprintf(stderr, "CUDA error in %s at line %d: %s\n", \
+                __FILE__, __LINE__, cudaGetErrorString(err)); \
         exit(err); \
     } \
 } while (0)
 
-struct  IVFIndex {
-    float* d_centroids;  // nlist * d
+// IVFIndex
+struct IVFIndex {
+    float* d_centroids;        // [nlist * dim]
     float* d_inverted_vectors;
-    int* d_inverted_ids;
-    int* d_list_offsets;
-    int* d_list_sizes;
+    int*   d_inverted_ids;    
+    int*   d_list_offsets;    
+    int*   d_list_sizes;       // [nlist]
     int nlist;
     int n_vectors;
     int dim;
